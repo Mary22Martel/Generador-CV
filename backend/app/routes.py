@@ -1,8 +1,12 @@
+import os
 from flask import Blueprint, request, jsonify
 from app.models import db, CV, Criteria
 import json
 from flask import send_file
 from io import BytesIO
+from PyPDF2 import PdfReader
+from docx import Document
+
 
 
 main_routes = Blueprint('main', __name__)
@@ -15,14 +19,47 @@ def index():
 # Endpoint para subir un CV
 @main_routes.route('/upload-cv', methods=['POST'])
 def upload_cv():
-    data = request.get_json()
-    if not data.get('filename') or not data.get('content'):
-        return jsonify({"error": "Filename and content are required"}), 400
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
 
-    new_cv = CV(filename=data['filename'], content=data['content'])
-    db.session.add(new_cv)
+    # Guardar el archivo en una carpeta temporal
+    temp_dir = "uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    file_path = os.path.join(temp_dir, file.filename)
+    file.save(file_path)
+
+    # Extraer texto según el tipo de archivo
+    extracted_text = ""
+    if file.filename.endswith('.pdf'):
+        try:
+            pdf_reader = PdfReader(file_path)
+            extracted_text = " ".join([page.extract_text() for page in pdf_reader.pages])
+        except Exception as e:
+            return jsonify({"error": "Failed to process PDF", "details": str(e)}), 500
+
+    elif file.filename.endswith('.docx'):
+        try:
+            doc = Document(file_path)
+            extracted_text = " ".join([para.text for para in doc.paragraphs])
+        except Exception as e:
+            return jsonify({"error": "Failed to process Word file", "details": str(e)}), 500
+    else:
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    # Guardar los datos en la base de datos
+    cv = CV(filename=file.filename, content=extracted_text)
+    db.session.add(cv)
     db.session.commit()
-    return jsonify({"message": "CV uploaded successfully!"}), 201
+
+    # Eliminar archivo temporal
+    os.remove(file_path)
+
+    return jsonify({"message": "CV uploaded successfully!", "cv_id": cv.id}), 201
 
 # Endpoint para listar cv   
 @main_routes.route('/get-cvs', methods=['GET'])
