@@ -50,3 +50,32 @@ def extract_criteria(cv_id):
     db.session.commit()
     return jsonify({"message": "Criteria extracted successfully!"})
 
+
+#listar criterios
+@main_routes.route('/get-criteria', methods=['GET'])
+def get_criteria():
+    criteria = Criteria.query.all()
+    return jsonify([{"id": crit.id, "description": crit.description, "valid": crit.valid} for crit in criteria])
+
+#enpoint para votar criterios
+@main_routes.route('/vote-criteria/<int:criteria_id>', methods=['PATCH'])
+def vote_criteria(criteria_id):
+    # Buscar el criterio por ID
+    criteria = Criteria.query.get(criteria_id)
+    if not criteria:
+        return jsonify({"error": "Criteria not found"}), 404
+
+    # Obtener la validación del cuerpo de la solicitud
+    data = request.get_json()
+    if "valid" not in data:
+        return jsonify({"error": "Missing 'valid' field in request body"}), 400
+
+    # Actualizar la validez del criterio
+    criteria.valid = data["valid"]
+    db.session.commit()
+
+    return jsonify({
+        "message": "Criteria updated successfully",
+        "criteria_id": criteria.id,
+        "valid": criteria.valid
+    })
