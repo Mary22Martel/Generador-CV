@@ -1,5 +1,8 @@
 from flask import Blueprint, request, jsonify
 from app.models import db, CV, Criteria
+import json
+from flask import send_file
+from io import BytesIO
 
 
 main_routes = Blueprint('main', __name__)
@@ -79,3 +82,34 @@ def vote_criteria(criteria_id):
         "criteria_id": criteria.id,
         "valid": criteria.valid
     })
+
+#generar nuevo fromato
+@main_routes.route('/generate-cv', methods=['GET'])
+def generate_cv():
+    # Obtener todos los criterios válidos
+    valid_criteria = Criteria.query.filter_by(valid=True).all()
+
+    if not valid_criteria:
+        return jsonify({"error": "No valid criteria found"}), 404
+
+    # Crear un formato básico de CV (JSON simulado)
+    cv_data = {
+        "sections": [
+            {"title": "Criteria", "content": [crit.description for crit in valid_criteria]}
+        ]
+    }
+
+    # Simulación: Guardar como JSON
+    json_data = json.dumps(cv_data, indent=4)
+
+    # Crear un archivo en memoria para devolverlo
+    memory_file = BytesIO()
+    memory_file.write(json_data.encode('utf-8'))
+    memory_file.seek(0)
+
+    return send_file(
+        memory_file,
+        download_name="generated_cv.json",
+        as_attachment=True,
+        mimetype='application/json'
+    )
