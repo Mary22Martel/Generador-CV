@@ -1,0 +1,78 @@
+.criteria-container {
+    margin: 20px auto;
+    max-width: 800px;
+    font-family: Arial, sans-serif;
+  }
+  
+  h2 {
+    text-align: center;
+    color: #333;
+  }
+  
+  .category-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background-color: #f9f9f9;
+  }
+  
+  .category-title {
+    font-size: 18px;
+    font-weight: bold;
+    color: #0056b3;
+    margin-bottom: 10px;
+  }
+  
+  .criteria-list {
+    list-style: none;
+    padding: 0;
+  }
+  
+  .criteria-item {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .criteria-item:last-child {
+    border-bottom: none;
+  }
+  
+  .vote-buttons {
+    display: flex;
+    gap: 10px;
+  }
+  
+  .vote-button {
+    padding: 5px 10px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.2s ease-in-out;
+  }
+  
+  .vote-button.valid {
+    background-color: #28a745;
+    color: white;
+  }
+  
+  .vote-button.invalid {
+    background-color: #dc3545;
+    color: white;
+  }
+  
+  .vote-button:hover {
+    background-color: #ddd;
+    color: #333;
+  }
+  
+  .error-message {
+    color: red;
+    font-weight: bold;
+    text-align: center;
+  }
+  

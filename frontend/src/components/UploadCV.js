@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const UploadCV = () => {
+const UploadCV = ({ onUploadSuccess }) => {
   const [file, setFile] = useState(null);
   const [message, setMessage] = useState('');
 
@@ -21,6 +21,7 @@ const UploadCV = () => {
         },
       });
       setMessage(response.data.message || 'Archivo subido exitosamente');
+      onUploadSuccess(); // Notifica a la app principal
     } catch (error) {
       console.error(error);
       setMessage('Error al subir el archivo');
@@ -29,8 +30,7 @@ const UploadCV = () => {
 
   return (
     <div>
-      <h2>Subir CV</h2>
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} className="upload-form">
         <input type="file" onChange={handleFileChange} />
         <button type="submit">Subir</button>
       </form>

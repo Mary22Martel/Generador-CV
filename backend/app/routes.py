@@ -1,23 +1,34 @@
 import os
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from app.models import db, CV, Criteria
 import json
-from flask import send_file
 from io import BytesIO
 from PyPDF2 import PdfReader
 from docx import Document
 import pdfplumber
-import spacy
 import re
+from fpdf import FPDF
 
-
+# Inicializar las categorías y palabras clave
+CATEGORY_KEYWORDS = {
+    "Datos Personales": ["nombre", "dirección", "teléfono", "correo electrónico", "foto", "perfil personal"],
+    "Grado de Instrucción": ["grado de instrucción", "nivel académico", "doctorado", "maestría", "licenciatura", "diplomado"],
+    "Experiencia Laboral": ["experiencia laboral", "trabajo", "proyectos de ingeniería", "empleos previos"],
+    "Idiomas": ["idioma", "inglés", "español", "nivel avanzado", "nivel intermedio", "multilingüe"],
+    "Certificaciones": ["certificación", "certificado", "curso avanzado", "AWS", "Azure", "Scrum", "PMP"],
+    "Conocimientos de Programación y Desarrollo": ["programación", "desarrollo", "lenguajes de programación", "Python", "Java", "frameworks"],
+    "Habilidades Técnicas y Digitales": ["habilidades técnicas", "competencias digitales", "herramientas digitales", "ofimática", "Scrum", "Kanban"],
+    "Competencias Digitales": ["herramientas digitales", "ofimática", "Excel", "PowerPoint"],
+    "Proyectos": ["proyectos", "portafolio", "github", "proyectos personales"],
+    "Habilidades Blandas": ["habilidad blanda", "soft skills", "liderazgo", "trabajo en equipo", "comunicación"],
+    "Habilidades Técnicas": ["habilidad técnica", "hard skills", "tecnologías", "lenguajes de programación"]
+}
 
 main_routes = Blueprint('main', __name__)
 
 @main_routes.route('/')
 def index():
     return jsonify({"message": "API funcionando correctamente."})
-
 
 # Endpoint para subir un CV
 @main_routes.route('/upload-cv', methods=['POST'])
@@ -26,7 +37,6 @@ def upload_cv():
         return jsonify({"error": "No file uploaded"}), 400
     
     file = request.files['file']
-    
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
 
@@ -40,8 +50,8 @@ def upload_cv():
     extracted_text = ""
     if file.filename.endswith('.pdf'):
         try:
-            pdf_reader = PdfReader(file_path)
-            extracted_text = " ".join([page.extract_text() for page in pdf_reader.pages])
+            with pdfplumber.open(file_path) as pdf:
+                extracted_text = " ".join([page.extract_text() for page in pdf.pages])
         except Exception as e:
             return jsonify({"error": "Failed to process PDF", "details": str(e)}), 500
 
@@ -61,194 +71,113 @@ def upload_cv():
 
     return jsonify({"message": "CV uploaded successfully!", "cv_id": cv.id}), 201
 
-
-# Endpoint para listar cv   
+# Endpoint para listar CVs
 @main_routes.route('/get-cvs', methods=['GET'])
 def get_cvs():
-    cvs = CV.query.all()  # Obtiene todos los CVs de la base de datos
+    cvs = CV.query.all()
     return jsonify([{"id": cv.id, "filename": cv.filename} for cv in cvs])
 
-# Endpoint para extraer texto 
-@main_routes.route('/process-cvs', methods=['POST'])
-def process_cvs():
-    cvs = CV.query.all()
-    results = []
-
-    for cv in cvs:
-        file_path = os.path.join('uploads', cv.filename)
-        if not os.path.exists(file_path):
-            results.append({"error": f"File not found: {file_path}"})
-            continue
-
-        try:
-            with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
-                    # Extraer texto y tablas
-                    tables = page.extract_tables()
-                    for table in tables:
-                        for row in table:
-                            # Procesar filas relevantes
-                            if any("Puntaje" in str(cell) for cell in row):
-                                results.append({"table_row": row})
-
-        except Exception as e:
-            results.append({"error": str(e)})
-
-    return jsonify(results)
-
-
-# Endpoint para extraer criterios   
-# Cargar el modelo spaCy
-nlp = spacy.load("es_core_news_sm")
-
+# Endpoint para extraer criterios de un CV
 @main_routes.route('/extract-criteria/<int:cv_id>', methods=['POST'])
 def extract_criteria(cv_id):
-    # Buscar el CV por ID
     cv = CV.query.get(cv_id)
     if not cv:
         return jsonify({"error": "CV not found"}), 404
 
-    # Contenido del CV
-    text = cv.content
+    text = cv.content or ""
+    detected_categories = {}
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword.lower() in text.lower():
+                if category not in detected_categories:
+                    detected_categories[category] = []
+                detected_categories[category].append({
+                    "description": f"Se detectó la categoría '{category}' en el CV.",
+                    "cv_id": cv.id
+                })
+                break
 
-    # Limpieza inicial para eliminar encabezados y pie de página
-    text = re.sub(r"(?i)formato de evaluación.*?mínimos a evaluar", "", text, flags=re.S)
-    text = re.sub(r"(?i)punta?je total.*?condición", "", text, flags=re.S)
-    text = re.sub(r"(?i)firma de representante.*", "", text, flags=re.S)
-
-    # Palabras clave para detectar bloques relevantes
-    KEYWORDS = [
-        "Experiencia Laboral", "Habilidades", "Certificaciones", 
-        "Educación", "Idiomas", "Proyectos"
-    ]
-
-    # Procesar texto con spaCy
-    doc = nlp(text)
-    extracted_criteria = []
-
-    for sent in doc.sents:
-        sentence = sent.text.strip()
-
-        # Filtrar contenido relevante: debe contener al menos una palabra clave
-        if any(keyword.lower() in sentence.lower() for keyword in KEYWORDS) and len(sentence) > 20:
-            extracted_criteria.append({
-                "description": sentence,
-                "cv_id": cv.id
-            })
-
-    # Eliminar duplicados por descripción
-    unique_criteria = {crit["description"]: crit for crit in extracted_criteria}.values()
-
-    # Guardar criterios válidos en la base de datos
-    for crit in unique_criteria:
-        new_criteria = Criteria(description=crit["description"], cv_id=crit["cv_id"])
-        db.session.add(new_criteria)
+    for category, criteria_list in detected_categories.items():
+        for crit in criteria_list:
+            new_criteria = Criteria(
+                description=crit["description"],
+                cv_id=crit["cv_id"]
+            )
+            db.session.add(new_criteria)
 
     db.session.commit()
 
     return jsonify({
-        "message": "Criteria extracted and cleaned successfully!",
-        "criteria": list(unique_criteria)
+        "message": "Criteria extracted and classified successfully!",
+        "criteria": detected_categories
     })
 
+# Endpoint para extraer criterios de todos los CVs
+@main_routes.route('/extract-criteria-all', methods=['POST'])
+def extract_criteria_all():
+    cvs = CV.query.all()
+    if not cvs:
+        return jsonify({"error": "No CVs found"}), 404
 
+    all_detected_categories = {}
+    for cv in cvs:
+        text = cv.content or ""
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            for keyword in keywords:
+                if keyword.lower() in text.lower():
+                    if category not in all_detected_categories:
+                        all_detected_categories[category] = []
+                    all_detected_categories[category].append({
+                        "description": f"Se detectó la categoría '{category}' en el CV {cv.filename}.",
+                        "cv_id": cv.id
+                    })
+                    break
 
+    for category, criteria_list in all_detected_categories.items():
+        for crit in criteria_list:
+            new_criteria = Criteria(
+                description=crit["description"],
+                cv_id=crit["cv_id"]
+            )
+            db.session.add(new_criteria)
 
-#listar criterios
+    db.session.commit()
+
+    return jsonify({
+        "message": "Criteria extracted and classified successfully for all CVs!",
+        "criteria": all_detected_categories
+    })
+
+# Endpoint para listar criterios agrupados
 @main_routes.route('/get-criteria', methods=['GET'])
 def get_criteria():
-    # Obtener todos los criterios de la base de datos
     criteria = Criteria.query.all()
-
-    # Inicializar diccionario para agrupar criterios por categoría
-    grouped_criteria = {
-        "Certificaciones": [],
-        "Educación": [],
-        "Experiencia Laboral": [],
-        "Habilidades": [],
-        "Idiomas": [],
-        "Proyectos": []
-    }
-
-    # Palabras clave para cada categoría
-    category_keywords = {
-        "Certificaciones": ["certificación", "certificado", "curso", "diploma"],
-        "Educación": ["grado", "título", "universitario", "egresado"],
-        "Experiencia Laboral": ["experiencia", "trabajo", "proyecto"],
-        "Habilidades": ["habilidad", "soft skill", "hard skill", "comunicación", "liderazgo"],
-        "Idiomas": ["idioma", "lenguaje", "inglés", "bilingüe"],
-        "Proyectos": ["proyecto", "portafolio", "github", "desarrollo"]
-    }
-
-    # Conjunto para rastrear descripciones únicas y evitar duplicados
-    seen_descriptions = set()
-
-    # Limpiar y clasificar criterios
+    grouped_criteria = {category: [] for category in CATEGORY_KEYWORDS.keys()}
     for crit in criteria:
-        # Convertir descripción a minúsculas y eliminar espacios en blanco al inicio y final
-        description = crit.description.strip().lower()
-
-        # Filtros: eliminar texto irrelevante o descripciones muy cortas
-        if (
-            "formato de evaluación curricular" in description
-            or len(description) < 15  # Descripciones muy cortas no son útiles
-            or "total puntaje" in description
-            or "condición" in description
-        ):
-            continue
-
-        # Evitar duplicados
-        if description in seen_descriptions:
-            continue
-        seen_descriptions.add(description)
-
-        # Clasificar por categoría usando palabras clave
-        added = False
-        for category, keywords in category_keywords.items():
-            if any(keyword in description for keyword in keywords):
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            if any(keyword.lower() in crit.description.lower() for keyword in keywords):
                 grouped_criteria[category].append({
                     "id": crit.id,
                     "cv_id": crit.cv_id,
                     "description": crit.description,
                     "valid": crit.valid
                 })
-                added = True
                 break
 
-        # Ignorar descripciones que no encajan en ninguna categoría
-        if not added:
-            continue
-
-    # Filtrar categorías vacías para devolver sólo las que contienen datos
     cleaned_criteria = {k: v for k, v in grouped_criteria.items() if v}
-
-    # Devolver el JSON con los criterios agrupados
     return jsonify(cleaned_criteria)
 
-
-
-
-
-
-
-
-
-
-
-#enpoint para votar criterios
+# Endpoint para votar criterios
 @main_routes.route('/vote-criteria/<int:criteria_id>', methods=['PATCH'])
 def vote_criteria(criteria_id):
-    # Buscar el criterio por ID
     criteria = Criteria.query.get(criteria_id)
     if not criteria:
         return jsonify({"error": "Criteria not found"}), 404
 
-    # Obtener la validación del cuerpo de la solicitud
     data = request.get_json()
     if "valid" not in data:
         return jsonify({"error": "Missing 'valid' field in request body"}), 400
 
-    # Actualizar la validez del criterio
     criteria.valid = data["valid"]
     db.session.commit()
 
@@ -258,7 +187,9 @@ def vote_criteria(criteria_id):
         "valid": criteria.valid
     })
 
-#generar nuevo fromato
+# Endpoint para generar un CV
+from fpdf import FPDF
+
 @main_routes.route('/generate-cv', methods=['GET'])
 def generate_cv():
     # Obtener todos los criterios válidos
@@ -267,44 +198,68 @@ def generate_cv():
     if not valid_criteria:
         return jsonify({"error": "No valid criteria found"}), 404
 
-    # Estructurar el CV agrupando los criterios por categoría
-    cv_data = {"sections": []}
-    categories = ["Experiencia Laboral", "Idiomas", "Certificaciones", "Educación", "Habilidades", "Proyectos"]
-    
-    for category in categories:
-        # Filtrar criterios que pertenecen a la categoría
-        content = [crit.description for crit in valid_criteria if category in crit.description]
-        if content:
-            cv_data["sections"].append({"title": category, "content": content})
+    # Crear un PDF con los criterios válidos
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
 
-    # Simulación: Guardar como JSON
-    json_data = json.dumps(cv_data, indent=4)
+    # Título del documento
+    pdf.set_font("Arial", style="B", size=16)
+    pdf.cell(200, 10, txt="Nuevo Formato de CV", ln=True, align='C')
+    pdf.ln(10)  # Salto de línea
 
-    # Crear un archivo en memoria para devolverlo
+    # Subtítulo
+    pdf.set_font("Arial", style="B", size=14)
+    pdf.cell(200, 10, txt="Basado en los criterios válidos extraídos", ln=True, align='C')
+    pdf.ln(15)
+
+    # Crear una tabla con los criterios
+    pdf.set_font("Arial", size=12)
+    pdf.set_fill_color(200, 220, 255)  # Color de fondo para la cabecera
+    pdf.cell(90, 10, "Categoría", border=1, align='C', fill=True)
+    pdf.cell(100, 10, "Descripción", border=1, align='C', fill=True)
+    pdf.ln()
+
+    for crit in valid_criteria:
+        # Extraer la categoría de la descripción
+        category = None
+        for cat in CATEGORY_KEYWORDS.keys():
+            if cat in crit.description:
+                category = cat
+                break
+        category = category or "Sin Categoría"  # Fallback si no hay categoría exacta
+
+        # Agregar fila a la tabla
+        pdf.cell(90, 10, category, border=1, align='L')
+        pdf.cell(100, 10, crit.description[:50] + "...", border=1, align='L')  # Limitar descripción a 50 caracteres
+        pdf.ln()
+
+    # Guardar el PDF en un string binario
+    pdf_output = pdf.output(dest='S').encode('latin1')
+
+    # Escribir el PDF en un objeto BytesIO
     memory_file = BytesIO()
-    memory_file.write(json_data.encode('utf-8'))
+    memory_file.write(pdf_output)
     memory_file.seek(0)
 
+    # Enviar el PDF como respuesta
     return send_file(
         memory_file,
-        download_name="generated_cv.json",
+        download_name="nuevo_formato_cv.pdf",
         as_attachment=True,
-        mimetype='application/json'
+        mimetype='application/pdf'
     )
 
 
-
-#limpiar todo
+# Endpoint para reiniciar datos
 @main_routes.route('/reset', methods=['POST'])
 def reset_data():
     try:
-        # Eliminar todos los criterios
         db.session.query(Criteria).delete()
-        # Eliminar todos los CVs
         db.session.query(CV).delete()
         db.session.commit()
 
-        # Limpiar la carpeta de uploads
         uploads_folder = 'uploads'
         if os.path.exists(uploads_folder):
             for file in os.listdir(uploads_folder):
