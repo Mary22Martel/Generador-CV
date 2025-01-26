@@ -1,13 +1,13 @@
 from app import db
 
-# Modelo para los CVs subidos
-class CV(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    filename = db.Column(db.String(255), nullable=False)  # Nombre del archivo
-    content = db.Column(db.Text, nullable=False)  # Contenido del CV
-
-# Modelo para los criterios extraídos
 class Criteria(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    description = db.Column(db.String(255), nullable=False)  # Descripción del criterio
-    valid = db.Column(db.Boolean, default=False)  # Si el criterio es válido o no
+    description = db.Column(db.Text, nullable=False)  # Cambiar de String a Text
+    valid = db.Column(db.Boolean, default=False)
+    cv_id = db.Column(db.Integer, db.ForeignKey('cv.id'), nullable=False)
+
+class CV(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=True)
+    criteria = db.relationship('Criteria', backref='cv', lazy=True)
