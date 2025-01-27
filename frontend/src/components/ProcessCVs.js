@@ -4,6 +4,7 @@ import axios from "axios";
 function ProcessCVs({ onProcess }) {
   const [loading, setLoading] = useState(false); // Estado para controlar si el proceso está en ejecución
   const [error, setError] = useState(""); // Estado para manejar errores
+  const [formUrl, setFormUrl] = useState(""); // Estado para almacenar el enlace del formulario
 
   const handleProcess = async () => {
     setLoading(true); // Activa el estado de carga
@@ -15,6 +16,7 @@ function ProcessCVs({ onProcess }) {
       if (response.status === 200) {
         alert("Criterios extraídos correctamente."); // Muestra una alerta de éxito
         onProcess(); // Refresca la lista de criterios en el frontend
+        setFormUrl(response.data.form_url); // Almacena el enlace del formulario
       }
     } catch (err) {
       // Maneja errores de la solicitud
@@ -33,6 +35,12 @@ function ProcessCVs({ onProcess }) {
       </button>
       {/* Muestra errores si ocurren */}
       {error && <p style={{ color: "red" }}>{error}</p>}
+      {/* Muestra el enlace del formulario si está disponible */}
+      {formUrl && (
+        <p>
+          Formulario creado: <a href={formUrl} target="_blank" rel="noopener noreferrer">{formUrl}</a>
+        </p>
+      )}
     </div>
   );
 }

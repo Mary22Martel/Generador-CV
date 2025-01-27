@@ -2,17 +2,19 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 const UploadCV = ({ onUploadSuccess }) => {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [message, setMessage] = useState('');
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
+    setFiles(e.target.files);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     const formData = new FormData();
-    formData.append('file', file);
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
 
     try {
       const response = await axios.post('http://127.0.0.1:5000/upload-cv', formData, {
@@ -20,18 +22,18 @@ const UploadCV = ({ onUploadSuccess }) => {
           'Content-Type': 'multipart/form-data',
         },
       });
-      setMessage(response.data.message || 'Archivo subido exitosamente');
+      setMessage(response.data.message || 'Archivos subidos exitosamente');
       onUploadSuccess(); // Notifica a la app principal
     } catch (error) {
       console.error(error);
-      setMessage('Error al subir el archivo');
+      setMessage('Error al subir los archivos');
     }
   };
 
   return (
     <div>
       <form onSubmit={handleSubmit} className="upload-form">
-        <input type="file" onChange={handleFileChange} />
+        <input type="file" onChange={handleFileChange} multiple />
         <button type="submit">Subir</button>
       </form>
       {message && <p>{message}</p>}

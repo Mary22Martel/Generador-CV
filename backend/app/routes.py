@@ -9,6 +9,24 @@ import pdfplumber
 import re
 from fpdf import FPDF
 
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
+# Cargar las credenciales de la cuenta de servicio
+creds_forms = service_account.Credentials.from_service_account_file(
+    'app/credentials.json',
+    scopes=['https://www.googleapis.com/auth/forms.body']
+)
+
+creds_drive = service_account.Credentials.from_service_account_file(
+    'app/credentials.json',
+    scopes=['https://www.googleapis.com/auth/drive']
+)
+
+# Construir el servicio de Google Forms
+forms_service = build('forms', 'v1', credentials=creds_forms)
+drive_service = build('drive', 'v3', credentials=creds_drive)
+
 # Inicializar las categorías y palabras clave
 CATEGORY_KEYWORDS = {
     "Datos Personales": ["nombre", "dirección", "teléfono", "correo electrónico", "foto", "perfil personal"],
@@ -33,43 +51,47 @@ def index():
 # Endpoint para subir un CV
 @main_routes.route('/upload-cv', methods=['POST'])
 def upload_cv():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    if 'files' not in request.files:
+        return jsonify({"error": "No files uploaded"}), 400
     
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({"error": "No selected files"}), 400
 
-    # Guardar el archivo en una carpeta temporal
     temp_dir = "uploads"
     os.makedirs(temp_dir, exist_ok=True)
-    file_path = os.path.join(temp_dir, file.filename)
-    file.save(file_path)
+    uploaded_cvs = []
 
-    # Extraer texto según el tipo de archivo
-    extracted_text = ""
-    if file.filename.endswith('.pdf'):
-        try:
-            with pdfplumber.open(file_path) as pdf:
-                extracted_text = " ".join([page.extract_text() for page in pdf.pages])
-        except Exception as e:
-            return jsonify({"error": "Failed to process PDF", "details": str(e)}), 500
+    for file in files:
+        if file.filename == '':
+            continue
 
-    elif file.filename.endswith('.docx'):
-        try:
-            doc = Document(file_path)
-            extracted_text = " ".join([para.text for para in doc.paragraphs])
-        except Exception as e:
-            return jsonify({"error": "Failed to process Word file", "details": str(e)}), 500
-    else:
-        return jsonify({"error": "Unsupported file type"}), 400
+        file_path = os.path.join(temp_dir, file.filename)
+        file.save(file_path)
 
-    # Guardar los datos en la base de datos
-    cv = CV(filename=file.filename, content=extracted_text)
-    db.session.add(cv)
-    db.session.commit()
+        extracted_text = ""
+        if file.filename.endswith('.pdf'):
+            try:
+                with pdfplumber.open(file_path) as pdf:
+                    extracted_text = " ".join([page.extract_text() for page in pdf.pages])
+            except Exception as e:
+                return jsonify({"error": f"Failed to process PDF {file.filename}", "details": str(e)}), 500
 
-    return jsonify({"message": "CV uploaded successfully!", "cv_id": cv.id}), 201
+        elif file.filename.endswith('.docx'):
+            try:
+                doc = Document(file_path)
+                extracted_text = " ".join([para.text for para in doc.paragraphs])
+            except Exception as e:
+                return jsonify({"error": f"Failed to process Word file {file.filename}", "details": str(e)}), 500
+        else:
+            return jsonify({"error": f"Unsupported file type {file.filename}"}), 400
+
+        cv = CV(filename=file.filename, content=extracted_text)
+        db.session.add(cv)
+        db.session.commit()
+        uploaded_cvs.append({"filename": file.filename, "cv_id": cv.id})
+
+    return jsonify({"message": "CVs uploaded successfully!", "uploaded_cvs": uploaded_cvs}), 201
 
 # Endpoint para listar CVs
 @main_routes.route('/get-cvs', methods=['GET'])
@@ -143,9 +165,66 @@ def extract_criteria_all():
 
     db.session.commit()
 
+    # Crear el formulario con solo el título
+    form_body = {
+        "info": {
+            "title": "Votación de CVs"
+        }
+    }
+
+    form = forms_service.forms().create(body=form_body).execute()
+
+    # Crear el cuerpo de la actualización
+    requests = []
+    for category, cvs in all_detected_categories.items():
+        question = {
+            "createItem": {
+                "item": {
+                    "title": f"Vota por el mejor CV en la categoría '{category}'",
+                    "questionItem": {
+                        "question": {
+                            "required": True,
+                            "choiceQuestion": {
+                                "type": "RADIO",
+                                "options": [{"value": cv["description"]} for cv in cvs]
+                            }
+                        }
+                    }
+                },
+                "location": {
+                    "index": 0
+                }
+            }
+        }
+        requests.append(question)
+
+    # Usar batchUpdate para agregar las preguntas
+    batch_update_body = {
+        "requests": requests
+    }
+
+    forms_service.forms().batchUpdate(formId=form['formId'], body=batch_update_body).execute()
+
+    # Compartir el formulario con la cuenta personal
+    user_email = '2020210322@udh.edu.pe'
+    permission = {
+        'type': 'user',
+        'role': 'writer',
+        'emailAddress': user_email
+    }
+    drive_service.permissions().create(
+        fileId=form['formId'],
+        body=permission,
+        fields='id'
+    ).execute()
+
+    # Obtener el enlace del formulario
+    form_url = f"https://docs.google.com/forms/d/{form['formId']}/edit"
+
     return jsonify({
         "message": "Criteria extracted and classified successfully for all CVs!",
-        "criteria": all_detected_categories
+        "criteria": all_detected_categories,
+        "form_url": form_url
     })
 
 # Endpoint para listar criterios agrupados
